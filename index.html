@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>L-systems</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="canvas"></canvas>
+      <aside class="panel">
+        <h1>L-system Controls</h1>
+        <label>
+          Axiom
+          <input id="axiom" type="text" value="F" />
+        </label>
+        <label>
+          Rules
+          <textarea id="rules" rows="5">F=FF-[-F+F+F]+[+F-F-F]</textarea>
+        </label>
+        <label>
+          Iterations
+          <input id="iterations" type="number" value="4" min="0" step="1" />
+        </label>
+        <label>
+          Angle
+          <input id="angle" type="number" value="22.5" step="0.1" />
+        </label>
+        <label>
+          Step
+          <input id="step" type="number" value="5" step="0.1" min="0" />
+        </label>
+        <button id="render" type="button">Render</button>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
