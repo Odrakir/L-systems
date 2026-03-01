@@ -1,5 +1,8 @@
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas');
 const renderButton = document.querySelector<HTMLButtonElement>('#render');
+const resetViewButton = document.querySelector<HTMLButtonElement>('#reset-view');
+const exportButton = document.querySelector<HTMLButtonElement>('#export-png');
+const presetsSelect = document.querySelector<HTMLSelectElement>('#presets');
 const axiomInput = document.querySelector<HTMLInputElement>('#axiom');
 const rulesInput = document.querySelector<HTMLTextAreaElement>('#rules');
 const iterationsInput = document.querySelector<HTMLInputElement>('#iterations');
@@ -14,6 +17,9 @@ const maxStackDepthOutput = document.querySelector<HTMLElement>('#max-stack-dept
 if (
   !canvas ||
   !renderButton ||
+  !resetViewButton ||
+  !exportButton ||
+  !presetsSelect ||
   !axiomInput ||
   !rulesInput ||
   !iterationsInput ||
@@ -36,7 +42,76 @@ if (!context) {
 
 const MAX_OUTPUT_LENGTH = 2_000_000;
 const CANVAS_PADDING_PX = 20;
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 20;
+
+const presets = {
+  tree: {
+    axiom: 'F',
+    rules: 'F=FF-[-F+F+F]+[+F-F-F]',
+    iterations: '4',
+    angle: '22.5',
+    step: '5'
+  },
+  bush: {
+    axiom: 'X',
+    rules: 'X=F-[[X]+X]+F[+FX]-X\nF=FF',
+    iterations: '5',
+    angle: '25',
+    step: '3'
+  },
+  fractal: {
+    axiom: 'F-F-F-F',
+    rules: 'F=F-F+F+FF-F-F+F',
+    iterations: '3',
+    angle: '90',
+    step: '4'
+  }
+} as const;
+
+type PresetName = keyof typeof presets;
+
+type RenderInputs = {
+  axiom: string;
+  rulesText: string;
+  iterations: number;
+  angle: number;
+  step: number;
+};
+
+type TurtleState = {
+  x: number;
+  y: number;
+  headingRadians: number;
+};
+
+type TurtleBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  maxStackDepth: number;
+};
+
+type RenderModel = {
+  sentence: string;
+  bounds: TurtleBounds;
+  angle: number;
+  step: number;
+};
+
 let currentDpr = window.devicePixelRatio || 1;
+let zoom = 1;
+let panX = 0;
+let panY = 0;
+let lastModel: RenderModel | null = null;
+let lastRewriteKey = '';
+let lastRewriteResult = '';
+let isDragging = false;
+let lastPointerX = 0;
+let lastPointerY = 0;
+
+const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
 const resizeCanvas = (): void => {
   const dpr = window.devicePixelRatio || 1;
@@ -46,14 +121,6 @@ const resizeCanvas = (): void => {
 
   canvas.width = Math.floor(width * dpr);
   canvas.height = Math.floor(height * dpr);
-
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.scale(dpr, dpr);
-};
-
-const clearCanvas = (): void => {
-  context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
-  context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 };
 
 const parseRules = (rawRules: string): Map<string, string> => {
@@ -112,22 +179,6 @@ const rewrite = (axiom: string, rules: Map<string, string>, iterations: number):
   }
 
   return current;
-};
-
-
-
-type TurtleState = {
-  x: number;
-  y: number;
-  headingRadians: number;
-};
-
-type TurtleBounds = {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-  maxStackDepth: number;
 };
 
 const computeBounds = (sentence: string, angleDeg: number, step: number): TurtleBounds => {
@@ -190,37 +241,42 @@ const computeBounds = (sentence: string, angleDeg: number, step: number): Turtle
   return { minX, minY, maxX, maxY, maxStackDepth };
 };
 
-const drawLSystem = (
-  ctx: CanvasRenderingContext2D,
-  sentence: string,
-  angleDeg: number,
-  step: number
-): void => {
-  const bounds = computeBounds(sentence, angleDeg, step);
-  const angleRadians = (angleDeg * Math.PI) / 180;
+const getFitTransform = (bounds: TurtleBounds): { scale: number; offsetX: number; offsetY: number } => {
   const drawingWidth = bounds.maxX - bounds.minX;
   const drawingHeight = bounds.maxY - bounds.minY;
   const availableWidth = Math.max(canvas.clientWidth - CANVAS_PADDING_PX * 2, 1);
   const availableHeight = Math.max(canvas.clientHeight - CANVAS_PADDING_PX * 2, 1);
   const widthScale = drawingWidth > 0 ? availableWidth / drawingWidth : Number.POSITIVE_INFINITY;
   const heightScale = drawingHeight > 0 ? availableHeight / drawingHeight : Number.POSITIVE_INFINITY;
-  const scale = Math.min(widthScale, heightScale, 1_000_000);
+  const fitScale = Math.min(widthScale, heightScale, 1_000_000);
 
-  const offsetX =
-    CANVAS_PADDING_PX +
-    (availableWidth - drawingWidth * scale) / 2 -
-    bounds.minX * scale;
-  const offsetY =
-    CANVAS_PADDING_PX +
-    (availableHeight - drawingHeight * scale) / 2 -
-    bounds.minY * scale;
+  const offsetX = CANVAS_PADDING_PX + (availableWidth - drawingWidth * fitScale) / 2 - bounds.minX * fitScale;
+  const offsetY = CANVAS_PADDING_PX + (availableHeight - drawingHeight * fitScale) / 2 - bounds.minY * fitScale;
+
+  return { scale: fitScale, offsetX, offsetY };
+};
+
+const drawModel = (ctx: CanvasRenderingContext2D, model: RenderModel): void => {
+  const { scale: fitScale, offsetX: fitOffsetX, offsetY: fitOffsetY } = getFitTransform(model.bounds);
+  const angleRadians = (model.angle * Math.PI) / 180;
+
+  const combinedScale = fitScale * zoom;
+  const combinedOffsetX = fitOffsetX * zoom + panX;
+  const combinedOffsetY = fitOffsetY * zoom + panY;
 
   ctx.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  ctx.setTransform(currentDpr * scale, 0, 0, currentDpr * scale, currentDpr * offsetX, currentDpr * offsetY);
+  ctx.setTransform(
+    currentDpr * combinedScale,
+    0,
+    0,
+    currentDpr * combinedScale,
+    currentDpr * combinedOffsetX,
+    currentDpr * combinedOffsetY
+  );
 
   ctx.strokeStyle = '#1f2937';
-  ctx.lineWidth = Math.max(1 / scale, 0.5 / scale);
+  ctx.lineWidth = Math.max(0.5 / combinedScale, 1 / combinedScale);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -230,17 +286,17 @@ const drawLSystem = (
   ctx.beginPath();
   ctx.moveTo(state.x, state.y);
 
-  for (const symbol of sentence) {
+  for (const symbol of model.sentence) {
     switch (symbol) {
       case 'F': {
-        state.x += Math.cos(state.headingRadians) * step;
-        state.y += Math.sin(state.headingRadians) * step;
+        state.x += Math.cos(state.headingRadians) * model.step;
+        state.y += Math.sin(state.headingRadians) * model.step;
         ctx.lineTo(state.x, state.y);
         break;
       }
       case 'f':
-        state.x += Math.cos(state.headingRadians) * step;
-        state.y += Math.sin(state.headingRadians) * step;
+        state.x += Math.cos(state.headingRadians) * model.step;
+        state.y += Math.sin(state.headingRadians) * model.step;
         ctx.moveTo(state.x, state.y);
         break;
       case '+':
@@ -291,45 +347,177 @@ const showError = (message: string): void => {
   maxStackDepthOutput.textContent = '-';
 };
 
-window.addEventListener('resize', () => {
-  resizeCanvas();
-  clearCanvas();
-});
+const parseInputs = (): RenderInputs => {
+  const iterations = Number.parseInt(iterationsInput.value, 10);
+  const angle = Number.parseFloat(angleInput.value);
+  const step = Number.parseFloat(stepInput.value);
 
-renderButton.addEventListener('click', () => {
-  clearCanvas();
+  if (Number.isNaN(iterations) || iterations < 0) {
+    throw new Error('Iterations must be a non-negative integer.');
+  }
 
+  if (Number.isNaN(angle) || !Number.isFinite(angle)) {
+    throw new Error('Angle must be a finite number.');
+  }
+
+  if (Number.isNaN(step) || !Number.isFinite(step) || step < 0) {
+    throw new Error('Step must be a non-negative finite number.');
+  }
+
+  return {
+    axiom: axiomInput.value,
+    rulesText: rulesInput.value,
+    iterations,
+    angle,
+    step
+  };
+};
+
+const buildModel = (inputs: RenderInputs): RenderModel => {
+  const rewriteKey = `${inputs.axiom}\u0000${inputs.rulesText}\u0000${inputs.iterations}`;
+
+  if (rewriteKey !== lastRewriteKey) {
+    const rules = parseRules(inputs.rulesText);
+    lastRewriteResult = rewrite(inputs.axiom, rules, inputs.iterations);
+    lastRewriteKey = rewriteKey;
+  }
+
+  const bounds = computeBounds(lastRewriteResult, inputs.angle, inputs.step);
+  return {
+    sentence: lastRewriteResult,
+    bounds,
+    angle: inputs.angle,
+    step: inputs.step
+  };
+};
+
+const renderCurrentModel = (): void => {
+  if (!lastModel) {
+    context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
+    context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+    return;
+  }
+
+  drawModel(context, lastModel);
+};
+
+const renderFromInputs = (resetViewport: boolean): void => {
   try {
-    const rules = parseRules(rulesInput.value);
-    const iterations = Number.parseInt(iterationsInput.value, 10);
+    const inputs = parseInputs();
+    lastModel = buildModel(inputs);
 
-    if (Number.isNaN(iterations) || iterations < 0) {
-      throw new Error('Iterations must be a non-negative integer.');
+    if (resetViewport) {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
     }
 
-    const angle = Number.parseFloat(angleInput.value);
-    const step = Number.parseFloat(stepInput.value);
-
-    if (Number.isNaN(angle) || !Number.isFinite(angle)) {
-      throw new Error('Angle must be a finite number.');
-    }
-
-    if (Number.isNaN(step) || !Number.isFinite(step) || step < 0) {
-      throw new Error('Step must be a non-negative finite number.');
-    }
-
-    const finalString = rewrite(axiomInput.value, rules, iterations);
-    const bounds = computeBounds(finalString, angle, step);
-    drawLSystem(context, finalString, angle, step);
-    showResult(finalString, bounds);
+    renderCurrentModel();
+    showResult(lastModel.sentence, lastModel.bounds);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error while rewriting.';
     showError(message);
   }
+};
+
+const applyPreset = (presetName: PresetName): void => {
+  const preset = presets[presetName];
+  axiomInput.value = preset.axiom;
+  rulesInput.value = preset.rules;
+  iterationsInput.value = preset.iterations;
+  angleInput.value = preset.angle;
+  stepInput.value = preset.step;
+};
+
+window.addEventListener('resize', () => {
+  resizeCanvas();
+  renderCurrentModel();
 });
 
+canvas.addEventListener('wheel', (event) => {
+  if (!lastModel) {
+    return;
+  }
+
+  event.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+
+  const zoomFactor = Math.exp(-event.deltaY * 0.0015);
+  const previousZoom = zoom;
+  const nextZoom = clamp(previousZoom * zoomFactor, ZOOM_MIN, ZOOM_MAX);
+
+  if (nextZoom === previousZoom) {
+    return;
+  }
+
+  const ratio = nextZoom / previousZoom;
+  panX = screenX - (screenX - panX) * ratio;
+  panY = screenY - (screenY - panY) * ratio;
+  zoom = nextZoom;
+  renderCurrentModel();
+});
+
+canvas.addEventListener('mousedown', (event) => {
+  isDragging = true;
+  lastPointerX = event.clientX;
+  lastPointerY = event.clientY;
+  canvas.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mouseup', () => {
+  isDragging = false;
+  canvas.style.cursor = 'grab';
+});
+
+window.addEventListener('mousemove', (event) => {
+  if (!isDragging || !lastModel) {
+    return;
+  }
+
+  const deltaX = event.clientX - lastPointerX;
+  const deltaY = event.clientY - lastPointerY;
+  lastPointerX = event.clientX;
+  lastPointerY = event.clientY;
+
+  panX += deltaX;
+  panY += deltaY;
+  renderCurrentModel();
+});
+
+renderButton.addEventListener('click', () => {
+  renderFromInputs(true);
+});
+
+resetViewButton.addEventListener('click', () => {
+  zoom = 1;
+  panX = 0;
+  panY = 0;
+  renderCurrentModel();
+});
+
+exportButton.addEventListener('click', () => {
+  const image = canvas.toDataURL('image/png');
+  const link = document.createElement('a');
+  link.href = image;
+  link.download = 'l-system.png';
+  link.click();
+});
+
+presetsSelect.addEventListener('change', () => {
+  const presetName = presetsSelect.value as PresetName;
+
+  if (presetName in presets) {
+    applyPreset(presetName);
+    renderFromInputs(true);
+  }
+});
+
+canvas.style.cursor = 'grab';
+applyPreset('tree');
 resizeCanvas();
-clearCanvas();
+renderFromInputs(true);
 
 const style = document.createElement('style');
 style.textContent = `
@@ -389,6 +577,7 @@ style.textContent = `
 
   .panel input,
   .panel textarea,
+  .panel select,
   .panel button {
     font: inherit;
     padding: 8px 10px;
@@ -400,12 +589,24 @@ style.textContent = `
     resize: vertical;
   }
 
+  .panel .actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
   .panel button {
     cursor: pointer;
     background: #2452ff;
     color: #fff;
     border-color: #2452ff;
     font-weight: 700;
+  }
+
+  .panel button.secondary {
+    background: #eef2ff;
+    color: #273469;
+    border-color: #c7d2fe;
   }
 
   .results {

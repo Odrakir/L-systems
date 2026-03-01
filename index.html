@@ -11,6 +11,14 @@
       <aside class="panel">
         <h1>L-system Controls</h1>
         <label>
+          Preset
+          <select id="presets">
+            <option value="tree">Tree</option>
+            <option value="bush">Bush</option>
+            <option value="fractal">Simple fractal</option>
+          </select>
+        </label>
+        <label>
           Axiom
           <input id="axiom" type="text" value="F" />
         </label>
@@ -30,7 +38,11 @@
           Step
           <input id="step" type="number" value="5" step="0.1" min="0" />
         </label>
-        <button id="render" type="button">Render</button>
+        <div class="actions">
+          <button id="render" type="button">Render</button>
+          <button class="secondary" id="reset-view" type="button">Reset view</button>
+          <button class="secondary" id="export-png" type="button">Export PNG</button>
+        </div>
         <section class="results" aria-live="polite">
           <p class="error" id="error-message"></p>
           <p><strong>Final length:</strong> <span id="final-length">-</span></p>
@@ -40,6 +52,6 @@
         </section>
       </aside>
     </div>
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
