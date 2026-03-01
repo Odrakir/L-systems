@@ -35,9 +35,12 @@ if (!context) {
 }
 
 const MAX_OUTPUT_LENGTH = 2_000_000;
+const CANVAS_PADDING_PX = 20;
+let currentDpr = window.devicePixelRatio || 1;
 
 const resizeCanvas = (): void => {
   const dpr = window.devicePixelRatio || 1;
+  currentDpr = dpr;
   const width = canvas.clientWidth;
   const height = canvas.clientHeight;
 
@@ -49,6 +52,7 @@ const resizeCanvas = (): void => {
 };
 
 const clearCanvas = (): void => {
+  context.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
   context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 };
 
@@ -186,6 +190,88 @@ const computeBounds = (sentence: string, angleDeg: number, step: number): Turtle
   return { minX, minY, maxX, maxY, maxStackDepth };
 };
 
+const drawLSystem = (
+  ctx: CanvasRenderingContext2D,
+  sentence: string,
+  angleDeg: number,
+  step: number
+): void => {
+  const bounds = computeBounds(sentence, angleDeg, step);
+  const angleRadians = (angleDeg * Math.PI) / 180;
+  const drawingWidth = bounds.maxX - bounds.minX;
+  const drawingHeight = bounds.maxY - bounds.minY;
+  const availableWidth = Math.max(canvas.clientWidth - CANVAS_PADDING_PX * 2, 1);
+  const availableHeight = Math.max(canvas.clientHeight - CANVAS_PADDING_PX * 2, 1);
+  const widthScale = drawingWidth > 0 ? availableWidth / drawingWidth : Number.POSITIVE_INFINITY;
+  const heightScale = drawingHeight > 0 ? availableHeight / drawingHeight : Number.POSITIVE_INFINITY;
+  const scale = Math.min(widthScale, heightScale, 1_000_000);
+
+  const offsetX =
+    CANVAS_PADDING_PX +
+    (availableWidth - drawingWidth * scale) / 2 -
+    bounds.minX * scale;
+  const offsetY =
+    CANVAS_PADDING_PX +
+    (availableHeight - drawingHeight * scale) / 2 -
+    bounds.minY * scale;
+
+  ctx.setTransform(currentDpr, 0, 0, currentDpr, 0, 0);
+  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  ctx.setTransform(currentDpr * scale, 0, 0, currentDpr * scale, currentDpr * offsetX, currentDpr * offsetY);
+
+  ctx.strokeStyle = '#1f2937';
+  ctx.lineWidth = Math.max(1 / scale, 0.5 / scale);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const state: TurtleState = { x: 0, y: 0, headingRadians: -Math.PI / 2 };
+  const stack: TurtleState[] = [];
+
+  ctx.beginPath();
+  ctx.moveTo(state.x, state.y);
+
+  for (const symbol of sentence) {
+    switch (symbol) {
+      case 'F': {
+        state.x += Math.cos(state.headingRadians) * step;
+        state.y += Math.sin(state.headingRadians) * step;
+        ctx.lineTo(state.x, state.y);
+        break;
+      }
+      case 'f':
+        state.x += Math.cos(state.headingRadians) * step;
+        state.y += Math.sin(state.headingRadians) * step;
+        ctx.moveTo(state.x, state.y);
+        break;
+      case '+':
+        state.headingRadians += angleRadians;
+        break;
+      case '-':
+        state.headingRadians -= angleRadians;
+        break;
+      case '[':
+        stack.push({ ...state });
+        break;
+      case ']': {
+        const previous = stack.pop();
+
+        if (previous) {
+          state.x = previous.x;
+          state.y = previous.y;
+          state.headingRadians = previous.headingRadians;
+          ctx.moveTo(state.x, state.y);
+        }
+
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  ctx.stroke();
+};
+
 const formatBounds = (bounds: TurtleBounds): string =>
   `${bounds.minX.toFixed(2)}, ${bounds.minY.toFixed(2)} → ${bounds.maxX.toFixed(2)}, ${bounds.maxY.toFixed(2)}`;
 
@@ -234,6 +320,7 @@ renderButton.addEventListener('click', () => {
 
     const finalString = rewrite(axiomInput.value, rules, iterations);
     const bounds = computeBounds(finalString, angle, step);
+    drawLSystem(context, finalString, angle, step);
     showResult(finalString, bounds);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error while rewriting.';
