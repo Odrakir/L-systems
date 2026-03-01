@@ -3,9 +3,13 @@ const renderButton = document.querySelector<HTMLButtonElement>('#render');
 const axiomInput = document.querySelector<HTMLInputElement>('#axiom');
 const rulesInput = document.querySelector<HTMLTextAreaElement>('#rules');
 const iterationsInput = document.querySelector<HTMLInputElement>('#iterations');
+const angleInput = document.querySelector<HTMLInputElement>('#angle');
+const stepInput = document.querySelector<HTMLInputElement>('#step');
 const errorOutput = document.querySelector<HTMLElement>('#error-message');
 const lengthOutput = document.querySelector<HTMLElement>('#final-length');
 const previewOutput = document.querySelector<HTMLElement>('#preview');
+const boundsOutput = document.querySelector<HTMLElement>('#bounds');
+const maxStackDepthOutput = document.querySelector<HTMLElement>('#max-stack-depth');
 
 if (
   !canvas ||
@@ -13,9 +17,13 @@ if (
   !axiomInput ||
   !rulesInput ||
   !iterationsInput ||
+  !angleInput ||
+  !stepInput ||
   !errorOutput ||
   !lengthOutput ||
-  !previewOutput
+  !previewOutput ||
+  !boundsOutput ||
+  !maxStackDepthOutput
 ) {
   throw new Error('Missing required UI elements.');
 }
@@ -102,16 +110,99 @@ const rewrite = (axiom: string, rules: Map<string, string>, iterations: number):
   return current;
 };
 
-const showResult = (finalString: string): void => {
+
+
+type TurtleState = {
+  x: number;
+  y: number;
+  headingRadians: number;
+};
+
+type TurtleBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  maxStackDepth: number;
+};
+
+const computeBounds = (sentence: string, angleDeg: number, step: number): TurtleBounds => {
+  const angleRadians = (angleDeg * Math.PI) / 180;
+  const state: TurtleState = { x: 0, y: 0, headingRadians: -Math.PI / 2 };
+  const stack: TurtleState[] = [];
+
+  let minX = state.x;
+  let minY = state.y;
+  let maxX = state.x;
+  let maxY = state.y;
+  let maxStackDepth = 0;
+
+  const updateBounds = (): void => {
+    minX = Math.min(minX, state.x);
+    minY = Math.min(minY, state.y);
+    maxX = Math.max(maxX, state.x);
+    maxY = Math.max(maxY, state.y);
+  };
+
+  const moveForward = (): void => {
+    state.x += Math.cos(state.headingRadians) * step;
+    state.y += Math.sin(state.headingRadians) * step;
+    updateBounds();
+  };
+
+  for (const symbol of sentence) {
+    switch (symbol) {
+      case 'F':
+      case 'f':
+        moveForward();
+        break;
+      case '+':
+        state.headingRadians += angleRadians;
+        break;
+      case '-':
+        state.headingRadians -= angleRadians;
+        break;
+      case '[':
+        stack.push({ ...state });
+        maxStackDepth = Math.max(maxStackDepth, stack.length);
+        break;
+      case ']': {
+        const previous = stack.pop();
+
+        if (previous) {
+          state.x = previous.x;
+          state.y = previous.y;
+          state.headingRadians = previous.headingRadians;
+          updateBounds();
+        }
+
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return { minX, minY, maxX, maxY, maxStackDepth };
+};
+
+const formatBounds = (bounds: TurtleBounds): string =>
+  `${bounds.minX.toFixed(2)}, ${bounds.minY.toFixed(2)} → ${bounds.maxX.toFixed(2)}, ${bounds.maxY.toFixed(2)}`;
+
+const showResult = (finalString: string, bounds: TurtleBounds): void => {
   errorOutput.textContent = '';
   lengthOutput.textContent = finalString.length.toLocaleString();
   previewOutput.textContent = finalString.slice(0, 200);
+  boundsOutput.textContent = formatBounds(bounds);
+  maxStackDepthOutput.textContent = bounds.maxStackDepth.toLocaleString();
 };
 
 const showError = (message: string): void => {
   errorOutput.textContent = message;
   lengthOutput.textContent = '-';
   previewOutput.textContent = '-';
+  boundsOutput.textContent = '-';
+  maxStackDepthOutput.textContent = '-';
 };
 
 window.addEventListener('resize', () => {
@@ -130,8 +221,20 @@ renderButton.addEventListener('click', () => {
       throw new Error('Iterations must be a non-negative integer.');
     }
 
+    const angle = Number.parseFloat(angleInput.value);
+    const step = Number.parseFloat(stepInput.value);
+
+    if (Number.isNaN(angle) || !Number.isFinite(angle)) {
+      throw new Error('Angle must be a finite number.');
+    }
+
+    if (Number.isNaN(step) || !Number.isFinite(step) || step < 0) {
+      throw new Error('Step must be a non-negative finite number.');
+    }
+
     const finalString = rewrite(axiomInput.value, rules, iterations);
-    showResult(finalString);
+    const bounds = computeBounds(finalString, angle, step);
+    showResult(finalString, bounds);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error while rewriting.';
     showError(message);
