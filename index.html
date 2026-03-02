@@ -38,12 +38,17 @@
           Step
           <input id="step" type="number" value="5" step="0.1" min="0" />
         </label>
+        <label>
+          Max symbols
+          <input id="max-symbols" type="number" value="2000000" min="1" step="1" />
+        </label>
         <div class="actions">
           <button id="render" type="button">Render</button>
           <button class="secondary" id="reset-view" type="button">Reset view</button>
           <button class="secondary" id="export-png" type="button">Export PNG</button>
         </div>
         <section class="results" aria-live="polite">
+          <p><strong>Progress:</strong> <span id="progress">Idle</span></p>
           <p class="error" id="error-message"></p>
           <p><strong>Final length:</strong> <span id="final-length">-</span></p>
           <p><strong>Preview (first 200):</strong> <span id="preview">-</span></p>
