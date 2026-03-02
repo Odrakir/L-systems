@@ -8,7 +8,9 @@ const rulesInput = document.querySelector<HTMLTextAreaElement>('#rules');
 const iterationsInput = document.querySelector<HTMLInputElement>('#iterations');
 const angleInput = document.querySelector<HTMLInputElement>('#angle');
 const stepInput = document.querySelector<HTMLInputElement>('#step');
+const maxSymbolsInput = document.querySelector<HTMLInputElement>('#max-symbols');
 const errorOutput = document.querySelector<HTMLElement>('#error-message');
+const progressOutput = document.querySelector<HTMLElement>('#progress');
 const lengthOutput = document.querySelector<HTMLElement>('#final-length');
 const previewOutput = document.querySelector<HTMLElement>('#preview');
 const boundsOutput = document.querySelector<HTMLElement>('#bounds');
@@ -25,7 +27,9 @@ if (
   !iterationsInput ||
   !angleInput ||
   !stepInput ||
+  !maxSymbolsInput ||
   !errorOutput ||
+  !progressOutput ||
   !lengthOutput ||
   !previewOutput ||
   !boundsOutput ||
@@ -40,7 +44,7 @@ if (!context) {
   throw new Error('Unable to acquire 2D rendering context.');
 }
 
-const MAX_OUTPUT_LENGTH = 2_000_000;
+const DEFAULT_MAX_OUTPUT_LENGTH = 2_000_000;
 const CANVAS_PADDING_PX = 20;
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 20;
@@ -51,21 +55,24 @@ const presets = {
     rules: 'F=FF-[-F+F+F]+[+F-F-F]',
     iterations: '4',
     angle: '22.5',
-    step: '5'
+    step: '5',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   bush: {
     axiom: 'X',
     rules: 'X=F-[[X]+X]+F[+FX]-X\nF=FF',
     iterations: '5',
     angle: '25',
-    step: '3'
+    step: '3',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   fractal: {
     axiom: 'F-F-F-F',
     rules: 'F=F-F+F+FF-F-F+F',
     iterations: '3',
     angle: '90',
-    step: '4'
+    step: '4',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   }
 } as const;
 
@@ -77,6 +84,7 @@ type RenderInputs = {
   iterations: number;
   angle: number;
   step: number;
+  maxSymbols: number;
 };
 
 type TurtleState = {
@@ -100,6 +108,11 @@ type RenderModel = {
   step: number;
 };
 
+type RewriteResult = {
+  sentence: string;
+  completedIterations: number;
+};
+
 let currentDpr = window.devicePixelRatio || 1;
 let zoom = 1;
 let panX = 0;
@@ -110,6 +123,7 @@ let lastRewriteResult = '';
 let isDragging = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
+let currentRenderToken = 0;
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 
@@ -157,31 +171,60 @@ const parseRules = (rawRules: string): Map<string, string> => {
   return ruleMap;
 };
 
-const rewrite = (axiom: string, rules: Map<string, string>, iterations: number): string => {
+const waitForPaint = async (): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+
+const rewrite = async (
+  axiom: string,
+  rules: Map<string, string>,
+  iterations: number,
+  maxSymbols: number,
+  onProgress: (message: string) => void,
+  renderToken: number
+): Promise<RewriteResult> => {
   let current = axiom;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
+    if (renderToken !== currentRenderToken) {
+      throw new Error('Render canceled.');
+    }
+
     const nextParts: string[] = [];
     let nextLength = 0;
 
-    for (const symbol of current) {
+    for (let symbolIndex = 0; symbolIndex < current.length; symbolIndex += 1) {
+      const symbol = current[symbolIndex] ?? '';
       const replacement = rules.get(symbol) ?? symbol;
       nextLength += replacement.length;
 
-      if (nextLength > MAX_OUTPUT_LENGTH) {
-        throw new Error(`Rewrite output exceeds ${MAX_OUTPUT_LENGTH.toLocaleString()} characters.`);
+      if (nextLength > maxSymbols) {
+        throw new Error(
+          `Stopped at iteration ${iteration + 1} because expanded output exceeded Max symbols (${maxSymbols.toLocaleString()}).`
+        );
       }
 
       nextParts.push(replacement);
     }
 
     current = nextParts.join('');
+    onProgress(
+      `Iteration ${iteration + 1}/${iterations} complete (${current.length.toLocaleString()} symbols).`
+    );
+    await waitForPaint();
   }
 
-  return current;
+  return { sentence: current, completedIterations: iterations };
 };
 
-const computeBounds = (sentence: string, angleDeg: number, step: number): TurtleBounds => {
+const computeBounds = (
+  sentence: string,
+  angleDeg: number,
+  step: number,
+  onProgress: (message: string) => void
+): TurtleBounds => {
+  onProgress('Computing bounds...');
   const angleRadians = (angleDeg * Math.PI) / 180;
   const state: TurtleState = { x: 0, y: 0, headingRadians: -Math.PI / 2 };
   const stack: TurtleState[] = [];
@@ -238,6 +281,7 @@ const computeBounds = (sentence: string, angleDeg: number, step: number): Turtle
     }
   }
 
+  onProgress('Bounds ready.');
   return { minX, minY, maxX, maxY, maxStackDepth };
 };
 
@@ -337,6 +381,7 @@ const showResult = (finalString: string, bounds: TurtleBounds): void => {
   previewOutput.textContent = finalString.slice(0, 200);
   boundsOutput.textContent = formatBounds(bounds);
   maxStackDepthOutput.textContent = bounds.maxStackDepth.toLocaleString();
+  progressOutput.textContent = 'Done.';
 };
 
 const showError = (message: string): void => {
@@ -345,12 +390,14 @@ const showError = (message: string): void => {
   previewOutput.textContent = '-';
   boundsOutput.textContent = '-';
   maxStackDepthOutput.textContent = '-';
+  progressOutput.textContent = 'Failed.';
 };
 
 const parseInputs = (): RenderInputs => {
   const iterations = Number.parseInt(iterationsInput.value, 10);
   const angle = Number.parseFloat(angleInput.value);
   const step = Number.parseFloat(stepInput.value);
+  const maxSymbols = Number.parseInt(maxSymbolsInput.value, 10);
 
   if (Number.isNaN(iterations) || iterations < 0) {
     throw new Error('Iterations must be a non-negative integer.');
@@ -364,25 +411,44 @@ const parseInputs = (): RenderInputs => {
     throw new Error('Step must be a non-negative finite number.');
   }
 
+  if (Number.isNaN(maxSymbols) || !Number.isFinite(maxSymbols) || maxSymbols < 1) {
+    throw new Error('Max symbols must be a positive integer.');
+  }
+
   return {
     axiom: axiomInput.value,
     rulesText: rulesInput.value,
     iterations,
     angle,
-    step
+    step,
+    maxSymbols
   };
 };
 
-const buildModel = (inputs: RenderInputs): RenderModel => {
-  const rewriteKey = `${inputs.axiom}\u0000${inputs.rulesText}\u0000${inputs.iterations}`;
+const buildModel = async (inputs: RenderInputs, renderToken: number): Promise<RenderModel> => {
+  const rewriteKey = `${inputs.axiom}\u0000${inputs.rulesText}\u0000${inputs.iterations}\u0000${inputs.maxSymbols}`;
 
   if (rewriteKey !== lastRewriteKey) {
     const rules = parseRules(inputs.rulesText);
-    lastRewriteResult = rewrite(inputs.axiom, rules, inputs.iterations);
+    const rewriteResult = await rewrite(
+      inputs.axiom,
+      rules,
+      inputs.iterations,
+      inputs.maxSymbols,
+      (message) => {
+        progressOutput.textContent = message;
+      },
+      renderToken
+    );
+    lastRewriteResult = rewriteResult.sentence;
     lastRewriteKey = rewriteKey;
+  } else {
+    progressOutput.textContent = 'Reusing cached rewrite.';
   }
 
-  const bounds = computeBounds(lastRewriteResult, inputs.angle, inputs.step);
+  const bounds = computeBounds(lastRewriteResult, inputs.angle, inputs.step, (message) => {
+    progressOutput.textContent = message;
+  });
   return {
     sentence: lastRewriteResult,
     bounds,
@@ -401,10 +467,21 @@ const renderCurrentModel = (): void => {
   drawModel(context, lastModel);
 };
 
-const renderFromInputs = (resetViewport: boolean): void => {
+const renderFromInputs = async (resetViewport: boolean): Promise<void> => {
+  currentRenderToken += 1;
+  const renderToken = currentRenderToken;
+
   try {
+    renderButton.disabled = true;
+    progressOutput.textContent = 'Starting render...';
     const inputs = parseInputs();
-    lastModel = buildModel(inputs);
+    const model = await buildModel(inputs, renderToken);
+
+    if (renderToken !== currentRenderToken) {
+      return;
+    }
+
+    lastModel = model;
 
     if (resetViewport) {
       zoom = 1;
@@ -415,8 +492,16 @@ const renderFromInputs = (resetViewport: boolean): void => {
     renderCurrentModel();
     showResult(lastModel.sentence, lastModel.bounds);
   } catch (error) {
+    if (renderToken !== currentRenderToken) {
+      return;
+    }
+
     const message = error instanceof Error ? error.message : 'Unknown error while rewriting.';
     showError(message);
+  } finally {
+    if (renderToken === currentRenderToken) {
+      renderButton.disabled = false;
+    }
   }
 };
 
@@ -427,6 +512,7 @@ const applyPreset = (presetName: PresetName): void => {
   iterationsInput.value = preset.iterations;
   angleInput.value = preset.angle;
   stepInput.value = preset.step;
+  maxSymbolsInput.value = preset.maxSymbols;
 };
 
 window.addEventListener('resize', () => {
@@ -487,7 +573,7 @@ window.addEventListener('mousemove', (event) => {
 });
 
 renderButton.addEventListener('click', () => {
-  renderFromInputs(true);
+  void renderFromInputs(true);
 });
 
 resetViewButton.addEventListener('click', () => {
@@ -510,125 +596,11 @@ presetsSelect.addEventListener('change', () => {
 
   if (presetName in presets) {
     applyPreset(presetName);
-    renderFromInputs(true);
+    void renderFromInputs(true);
   }
 });
 
 canvas.style.cursor = 'grab';
 applyPreset('tree');
 resizeCanvas();
-renderFromInputs(true);
-
-const style = document.createElement('style');
-style.textContent = `
-  :root {
-    color-scheme: light;
-    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  }
-
-  * {
-    box-sizing: border-box;
-  }
-
-  html,
-  body,
-  #app {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-  }
-
-  #app {
-    display: flex;
-    min-height: 100vh;
-    background: #f6f7f9;
-  }
-
-  #canvas {
-    flex: 1;
-    width: 100%;
-    height: 100%;
-    display: block;
-    background: #ffffff;
-  }
-
-  .panel {
-    width: 320px;
-    padding: 20px;
-    border-left: 1px solid #d6d9df;
-    background: #fdfdfd;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .panel h1 {
-    margin: 0 0 8px;
-    font-size: 1.25rem;
-  }
-
-  .panel label {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-weight: 600;
-    font-size: 0.9rem;
-  }
-
-  .panel input,
-  .panel textarea,
-  .panel select,
-  .panel button {
-    font: inherit;
-    padding: 8px 10px;
-    border: 1px solid #c5c9d2;
-    border-radius: 8px;
-  }
-
-  .panel textarea {
-    resize: vertical;
-  }
-
-  .panel .actions {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-
-  .panel button {
-    cursor: pointer;
-    background: #2452ff;
-    color: #fff;
-    border-color: #2452ff;
-    font-weight: 700;
-  }
-
-  .panel button.secondary {
-    background: #eef2ff;
-    color: #273469;
-    border-color: #c7d2fe;
-  }
-
-  .results {
-    margin-top: 8px;
-    padding-top: 12px;
-    border-top: 1px solid #e0e3ea;
-    display: grid;
-    gap: 8px;
-    font-size: 0.9rem;
-  }
-
-  .results p {
-    margin: 0;
-  }
-
-  .error {
-    color: #b42318;
-    min-height: 1.25rem;
-  }
-
-  #preview {
-    word-break: break-all;
-  }
-`;
-document.head.append(style);
+void renderFromInputs(true);
