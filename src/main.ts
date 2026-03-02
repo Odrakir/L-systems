@@ -1,3 +1,4 @@
+import './styles.css';
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas');
 const renderButton = document.querySelector<HTMLButtonElement>('#render');
 const resetViewButton = document.querySelector<HTMLButtonElement>('#reset-view');
