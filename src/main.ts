@@ -74,6 +74,54 @@ const presets = {
     angle: '90',
     step: '4',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  pineTree: {
+    axiom: 'F',
+    rules: 'F=F[+F]F[-F]F',
+    iterations: '4',
+    angle: '20',
+    step: '4',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  fern: {
+    axiom: 'X',
+    rules: 'X=F+[[X]-X]-F[-FX]+X\nF=FF',
+    iterations: '5',
+    angle: '22.5',
+    step: '3',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  weed: {
+    axiom: 'Y',
+    rules: 'X=X[-FFF][+FFF]FX\nY=YFX[+Y][-Y]',
+    iterations: '5',
+    angle: '25.7',
+    step: '3',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  kochSnowflake: {
+    axiom: 'F--F--F',
+    rules: 'F=F+F--F+F',
+    iterations: '4',
+    angle: '60',
+    step: '3',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  sierpinskiTriangle: {
+    axiom: 'F-G-G',
+    rules: 'F=F-G+F+G-F\nG=GG',
+    iterations: '6',
+    angle: '120',
+    step: '4',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  dragonCurve: {
+    axiom: 'FX',
+    rules: 'X=X+YF+\nY=-FX-Y',
+    iterations: '12',
+    angle: '90',
+    step: '6',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   }
 } as const;
 
