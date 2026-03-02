@@ -122,6 +122,30 @@ const presets = {
     angle: '90',
     step: '6',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  hilbertCurve: {
+    axiom: 'A',
+    rules: 'A=+BF-AFA-FB+\nB=-AF+BFB+FA-',
+    iterations: '5',
+    angle: '90',
+    step: '6',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  levyCCurve: {
+    axiom: 'F',
+    rules: 'F=+F--F+',
+    iterations: '12',
+    angle: '45',
+    step: '8',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
+  },
+  pentaplexity: {
+    axiom: 'F++F++F++F++F',
+    rules: 'F=F++F++F|F-F++F',
+    iterations: '3',
+    angle: '36',
+    step: '4',
+    maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   }
 } as const;
 
@@ -300,6 +324,7 @@ const computeBounds = (
   for (const symbol of sentence) {
     switch (symbol) {
       case 'F':
+      case 'G':
       case 'f':
         moveForward();
         break;
@@ -382,6 +407,12 @@ const drawModel = (ctx: CanvasRenderingContext2D, model: RenderModel): void => {
   for (const symbol of model.sentence) {
     switch (symbol) {
       case 'F': {
+        state.x += Math.cos(state.headingRadians) * model.step;
+        state.y += Math.sin(state.headingRadians) * model.step;
+        ctx.lineTo(state.x, state.y);
+        break;
+      }
+      case 'G': {
         state.x += Math.cos(state.headingRadians) * model.step;
         state.y += Math.sin(state.headingRadians) * model.step;
         ctx.lineTo(state.x, state.y);
