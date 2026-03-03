@@ -8,7 +8,6 @@ const axiomInput = document.querySelector<HTMLInputElement>('#axiom');
 const rulesInput = document.querySelector<HTMLTextAreaElement>('#rules');
 const iterationsInput = document.querySelector<HTMLInputElement>('#iterations');
 const angleInput = document.querySelector<HTMLInputElement>('#angle');
-const stepInput = document.querySelector<HTMLInputElement>('#step');
 const maxSymbolsInput = document.querySelector<HTMLInputElement>('#max-symbols');
 const errorOutput = document.querySelector<HTMLElement>('#error-message');
 const progressOutput = document.querySelector<HTMLElement>('#progress');
@@ -27,7 +26,6 @@ if (
   !rulesInput ||
   !iterationsInput ||
   !angleInput ||
-  !stepInput ||
   !maxSymbolsInput ||
   !errorOutput ||
   !progressOutput ||
@@ -48,7 +46,8 @@ if (!context) {
 const DEFAULT_MAX_OUTPUT_LENGTH = 2_000_000;
 const CANVAS_PADDING_PX = 20;
 const ZOOM_MIN = 0.1;
-const ZOOM_MAX = 20;
+const ZOOM_MAX = 100;
+const DEFAULT_STEP = 5;
 
 const presets = {
   tree: {
@@ -56,7 +55,6 @@ const presets = {
     rules: 'F=FF-[-F+F+F]+[+F-F-F]',
     iterations: '4',
     angle: '22.5',
-    step: '5',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   bush: {
@@ -64,7 +62,6 @@ const presets = {
     rules: 'X=F-[[X]+X]+F[+FX]-X\nF=FF',
     iterations: '5',
     angle: '25',
-    step: '3',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   fractal: {
@@ -72,7 +69,6 @@ const presets = {
     rules: 'F=F-F+F+FF-F-F+F',
     iterations: '3',
     angle: '90',
-    step: '4',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   pineTree: {
@@ -80,7 +76,6 @@ const presets = {
     rules: 'F=F[+F]F[-F]F',
     iterations: '4',
     angle: '20',
-    step: '4',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   fern: {
@@ -88,7 +83,6 @@ const presets = {
     rules: 'X=F+[[X]-X]-F[-FX]+X\nF=FF',
     iterations: '5',
     angle: '22.5',
-    step: '3',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   weed: {
@@ -96,7 +90,6 @@ const presets = {
     rules: 'X=X[-FFF][+FFF]FX\nY=YFX[+Y][-Y]',
     iterations: '5',
     angle: '25.7',
-    step: '3',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   kochSnowflake: {
@@ -104,7 +97,6 @@ const presets = {
     rules: 'F=F+F--F+F',
     iterations: '4',
     angle: '60',
-    step: '3',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   sierpinskiTriangle: {
@@ -112,7 +104,6 @@ const presets = {
     rules: 'F=F-G+F+G-F\nG=GG',
     iterations: '6',
     angle: '120',
-    step: '4',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   dragonCurve: {
@@ -120,7 +111,6 @@ const presets = {
     rules: 'X=X+YF+\nY=-FX-Y',
     iterations: '12',
     angle: '90',
-    step: '6',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   hilbertCurve: {
@@ -128,7 +118,6 @@ const presets = {
     rules: 'A=+BF-AFA-FB+\nB=-AF+BFB+FA-',
     iterations: '5',
     angle: '90',
-    step: '6',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   levyCCurve: {
@@ -136,7 +125,6 @@ const presets = {
     rules: 'F=+F--F+',
     iterations: '12',
     angle: '45',
-    step: '8',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   },
   pentaplexity: {
@@ -144,7 +132,6 @@ const presets = {
     rules: 'F=F++F++F|F-F++F',
     iterations: '3',
     angle: '36',
-    step: '4',
     maxSymbols: String(DEFAULT_MAX_OUTPUT_LENGTH)
   }
 } as const;
@@ -156,7 +143,6 @@ type RenderInputs = {
   rulesText: string;
   iterations: number;
   angle: number;
-  step: number;
   maxSymbols: number;
 };
 
@@ -178,7 +164,6 @@ type RenderModel = {
   sentence: string;
   bounds: TurtleBounds;
   angle: number;
-  step: number;
 };
 
 type RewriteResult = {
@@ -294,7 +279,6 @@ const rewrite = async (
 const computeBounds = (
   sentence: string,
   angleDeg: number,
-  step: number,
   onProgress: (message: string) => void
 ): TurtleBounds => {
   onProgress('Computing bounds...');
@@ -316,8 +300,8 @@ const computeBounds = (
   };
 
   const moveForward = (): void => {
-    state.x += Math.cos(state.headingRadians) * step;
-    state.y += Math.sin(state.headingRadians) * step;
+    state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+    state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
     updateBounds();
   };
 
@@ -407,20 +391,20 @@ const drawModel = (ctx: CanvasRenderingContext2D, model: RenderModel): void => {
   for (const symbol of model.sentence) {
     switch (symbol) {
       case 'F': {
-        state.x += Math.cos(state.headingRadians) * model.step;
-        state.y += Math.sin(state.headingRadians) * model.step;
+        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
         ctx.lineTo(state.x, state.y);
         break;
       }
       case 'G': {
-        state.x += Math.cos(state.headingRadians) * model.step;
-        state.y += Math.sin(state.headingRadians) * model.step;
+        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
         ctx.lineTo(state.x, state.y);
         break;
       }
       case 'f':
-        state.x += Math.cos(state.headingRadians) * model.step;
-        state.y += Math.sin(state.headingRadians) * model.step;
+        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
         ctx.moveTo(state.x, state.y);
         break;
       case '+':
@@ -476,7 +460,6 @@ const showError = (message: string): void => {
 const parseInputs = (): RenderInputs => {
   const iterations = Number.parseInt(iterationsInput.value, 10);
   const angle = Number.parseFloat(angleInput.value);
-  const step = Number.parseFloat(stepInput.value);
   const maxSymbols = Number.parseInt(maxSymbolsInput.value, 10);
 
   if (Number.isNaN(iterations) || iterations < 0) {
@@ -485,10 +468,6 @@ const parseInputs = (): RenderInputs => {
 
   if (Number.isNaN(angle) || !Number.isFinite(angle)) {
     throw new Error('Angle must be a finite number.');
-  }
-
-  if (Number.isNaN(step) || !Number.isFinite(step) || step < 0) {
-    throw new Error('Step must be a non-negative finite number.');
   }
 
   if (Number.isNaN(maxSymbols) || !Number.isFinite(maxSymbols) || maxSymbols < 1) {
@@ -500,7 +479,6 @@ const parseInputs = (): RenderInputs => {
     rulesText: rulesInput.value,
     iterations,
     angle,
-    step,
     maxSymbols
   };
 };
@@ -526,14 +504,13 @@ const buildModel = async (inputs: RenderInputs, renderToken: number): Promise<Re
     progressOutput.textContent = 'Reusing cached rewrite.';
   }
 
-  const bounds = computeBounds(lastRewriteResult, inputs.angle, inputs.step, (message) => {
+  const bounds = computeBounds(lastRewriteResult, inputs.angle, (message) => {
     progressOutput.textContent = message;
   });
   return {
     sentence: lastRewriteResult,
     bounds,
-    angle: inputs.angle,
-    step: inputs.step
+    angle: inputs.angle
   };
 };
 
@@ -591,7 +568,6 @@ const applyPreset = (presetName: PresetName): void => {
   rulesInput.value = preset.rules;
   iterationsInput.value = preset.iterations;
   angleInput.value = preset.angle;
-  stepInput.value = preset.step;
   maxSymbolsInput.value = preset.maxSymbols;
 };
 
