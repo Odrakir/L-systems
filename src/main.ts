@@ -162,12 +162,14 @@ type TurtleBounds = {
 
 type RenderModel = {
   sentence: string;
+  tokens: string[];
   bounds: TurtleBounds;
   angle: number;
 };
 
 type RewriteResult = {
   sentence: string;
+  tokens: string[];
   completedIterations: number;
 };
 
@@ -178,6 +180,7 @@ let panY = 0;
 let lastModel: RenderModel | null = null;
 let lastRewriteKey = '';
 let lastRewriteResult = '';
+let lastRewriteTokens: string[] = [];
 let isDragging = false;
 let lastPointerX = 0;
 let lastPointerY = 0;
@@ -217,10 +220,8 @@ const parseRules = (rawRules: string): Map<string, string> => {
     const key = line.slice(0, separatorIndex).trim();
     const replacement = line.slice(separatorIndex + 1).trim();
 
-    if (key.length !== 1) {
-      throw new Error(
-        `Invalid rule on line ${lineIndex + 1}: key must be exactly one character.`
-      );
+    if (!key.length) {
+      throw new Error(`Invalid rule on line ${lineIndex + 1}: key cannot be empty.`);
     }
 
     ruleMap.set(key, replacement);
@@ -234,6 +235,35 @@ const waitForPaint = async (): Promise<void> =>
     window.setTimeout(resolve, 0);
   });
 
+
+const tokenizeSentence = (sentence: string, ruleKeys: readonly string[]): string[] => {
+  const tokens: string[] = [];
+  const sortedRuleKeys = [...ruleKeys].sort((left, right) => right.length - left.length);
+
+  for (let index = 0; index < sentence.length;) {
+    const matchedRule = sortedRuleKeys.find((ruleKey) => sentence.startsWith(ruleKey, index));
+
+    if (matchedRule) {
+      tokens.push(matchedRule);
+      index += matchedRule.length;
+      continue;
+    }
+
+    const symbol = sentence[index] ?? '';
+
+    if (symbol) {
+      tokens.push(symbol);
+      index += 1;
+    }
+  }
+
+  return tokens;
+};
+
+const isDrawForwardToken = (token: string): boolean => token === 'F' || token === 'G' || /^[FG].+/.test(token);
+
+const isMoveForwardToken = (token: string): boolean => token === 'f' || /^f.+/.test(token);
+
 const rewrite = async (
   axiom: string,
   rules: Map<string, string>,
@@ -242,7 +272,8 @@ const rewrite = async (
   onProgress: (message: string) => void,
   renderToken: number
 ): Promise<RewriteResult> => {
-  let current = axiom;
+  const ruleKeys = [...rules.keys()];
+  let currentTokens = tokenizeSentence(axiom, ruleKeys);
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     if (renderToken !== currentRenderToken) {
@@ -252,8 +283,7 @@ const rewrite = async (
     const nextParts: string[] = [];
     let nextLength = 0;
 
-    for (let symbolIndex = 0; symbolIndex < current.length; symbolIndex += 1) {
-      const symbol = current[symbolIndex] ?? '';
+    for (const symbol of currentTokens) {
       const replacement = rules.get(symbol) ?? symbol;
       nextLength += replacement.length;
 
@@ -266,18 +296,23 @@ const rewrite = async (
       nextParts.push(replacement);
     }
 
-    current = nextParts.join('');
+    const nextSentence = nextParts.join('');
+    currentTokens = tokenizeSentence(nextSentence, ruleKeys);
     onProgress(
-      `Iteration ${iteration + 1}/${iterations} complete (${current.length.toLocaleString()} symbols).`
+      `Iteration ${iteration + 1}/${iterations} complete (${nextSentence.length.toLocaleString()} symbols).`
     );
     await waitForPaint();
   }
 
-  return { sentence: current, completedIterations: iterations };
+  return {
+    sentence: currentTokens.join(''),
+    tokens: currentTokens,
+    completedIterations: iterations
+  };
 };
 
 const computeBounds = (
-  sentence: string,
+  tokens: readonly string[],
   angleDeg: number,
   onProgress: (message: string) => void
 ): TurtleBounds => {
@@ -305,13 +340,8 @@ const computeBounds = (
     updateBounds();
   };
 
-  for (const symbol of sentence) {
+  for (const symbol of tokens) {
     switch (symbol) {
-      case 'F':
-      case 'G':
-      case 'f':
-        moveForward();
-        break;
       case '+':
         state.headingRadians += angleRadians;
         break;
@@ -335,6 +365,9 @@ const computeBounds = (
         break;
       }
       default:
+        if (isDrawForwardToken(symbol) || isMoveForwardToken(symbol)) {
+          moveForward();
+        }
         break;
     }
   }
@@ -388,25 +421,8 @@ const drawModel = (ctx: CanvasRenderingContext2D, model: RenderModel): void => {
   ctx.beginPath();
   ctx.moveTo(state.x, state.y);
 
-  for (const symbol of model.sentence) {
+  for (const symbol of model.tokens) {
     switch (symbol) {
-      case 'F': {
-        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
-        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
-        ctx.lineTo(state.x, state.y);
-        break;
-      }
-      case 'G': {
-        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
-        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
-        ctx.lineTo(state.x, state.y);
-        break;
-      }
-      case 'f':
-        state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
-        state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
-        ctx.moveTo(state.x, state.y);
-        break;
       case '+':
         state.headingRadians += angleRadians;
         break;
@@ -429,6 +445,15 @@ const drawModel = (ctx: CanvasRenderingContext2D, model: RenderModel): void => {
         break;
       }
       default:
+        if (isDrawForwardToken(symbol)) {
+          state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+          state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
+          ctx.lineTo(state.x, state.y);
+        } else if (isMoveForwardToken(symbol)) {
+          state.x += Math.cos(state.headingRadians) * DEFAULT_STEP;
+          state.y += Math.sin(state.headingRadians) * DEFAULT_STEP;
+          ctx.moveTo(state.x, state.y);
+        }
         break;
     }
   }
@@ -499,16 +524,18 @@ const buildModel = async (inputs: RenderInputs, renderToken: number): Promise<Re
       renderToken
     );
     lastRewriteResult = rewriteResult.sentence;
+    lastRewriteTokens = rewriteResult.tokens;
     lastRewriteKey = rewriteKey;
   } else {
     progressOutput.textContent = 'Reusing cached rewrite.';
   }
 
-  const bounds = computeBounds(lastRewriteResult, inputs.angle, (message) => {
+  const bounds = computeBounds(lastRewriteTokens, inputs.angle, (message) => {
     progressOutput.textContent = message;
   });
   return {
     sentence: lastRewriteResult,
+    tokens: lastRewriteTokens,
     bounds,
     angle: inputs.angle
   };
